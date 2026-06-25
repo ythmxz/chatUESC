@@ -26,3 +26,4 @@ python .\chatbot.py
 
 - Implementar busca com `sentence-transformers` usando modelo local `all-MiniLM-L6-v2`.
 - Implementar detecção de respostas contidas nos contextos para economizar tokens.
+- Implementar script central de execução.
