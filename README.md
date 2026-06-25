@@ -22,6 +22,8 @@ python .\build_index.py
 python .\chatbot.py
 ```
 
+> OBS: Lembre de criar uma chave de API no [Google AI Studio](https://aistudio.google.com/api-keys) e colocar como valor da constante `API_KEY`.
+
 ## A Fazer
 
 - Implementar busca com `sentence-transformers` usando modelo local `all-MiniLM-L6-v2`.
