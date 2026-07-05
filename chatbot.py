@@ -1,6 +1,7 @@
 from google.genai import Client
 from google.genai.types import GenerateContentConfig, GenerateContentResponse
 from json import load
+from os import getenv
 from numpy import dtype, float64, int64, ndarray
 from scipy.sparse import spmatrix
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -11,9 +12,30 @@ from typing import Any, Iterator
 API_KEY: str = ""
 
 
-def search_context(question: str, k: int = 15) -> list[dict[str, str]]:
+def load_chunks(chunks_path: str = "chunks.json") -> list[dict[str, str]]:
+    """Carrega os chunks de contexto que alimentam a recuperação de informação."""
+    with open(chunks_path, encoding="utf8") as f:
+        return load(f)
+
+
+def build_vector_index(chunks: list[dict[str, str]]) -> tuple[TfidfVectorizer, spmatrix]:
+    """Cria vetorizador TF-IDF e matriz de documentos para busca por similaridade."""
+    documents: list[str] = [chunk["text"] for chunk in chunks]
+    vectorizer: TfidfVectorizer = TfidfVectorizer(ngram_range=(1, 2), lowercase=True)
+    matrix: spmatrix = vectorizer.fit_transform(documents)
+    return vectorizer, matrix
+
+
+def search_context(
+    question: str,
+    chunks: list[dict[str, str]],
+    vectorizer: TfidfVectorizer,
+    matrix: spmatrix,
+    k: int = 15,
+) -> list[dict[str, str]]:
+    """Recupera os chunks mais relevantes para a pergunta evitando duplicação por URL."""
     question_vector: spmatrix = vectorizer.transform([question])
-    similarities: ndarray[Any, dtype[float64]] = cosine_similarity(question_vector, X)[0]
+    similarities: ndarray[Any, dtype[float64]] = cosine_similarity(question_vector, matrix)[0]
     indexes: ndarray[Any, dtype[int64]] = similarities.argsort()[-k:][::-1]
 
     results: list[dict[str, str]] = []
@@ -34,8 +56,16 @@ def search_context(question: str, k: int = 15) -> list[dict[str, str]]:
     return results
 
 
-def answer(question) -> Iterator[GenerateContentResponse]:
-    context: list[dict[str, str]] = search_context(question)
+def answer(
+    question: str,
+    client: Client,
+    chunks: list[dict[str, str]],
+    vectorizer: TfidfVectorizer,
+    matrix: spmatrix,
+    model: str = "gemini-3.5-flash",
+) -> Iterator[GenerateContentResponse]:
+    """Gera resposta em streaming usando Gemini com contexto recuperado localmente."""
+    context: list[dict[str, str]] = search_context(question, chunks, vectorizer, matrix)
     context_text = "\n\n".join(item["text"] for item in context)
 
     prompt: str = f"""
@@ -54,7 +84,7 @@ def answer(question) -> Iterator[GenerateContentResponse]:
     """
 
     response = client.models.generate_content_stream(
-        model="gemini-3.5-flash",
+        model=model,
         contents=prompt,
         config=GenerateContentConfig(
             system_instruction="""
@@ -72,27 +102,38 @@ def answer(question) -> Iterator[GenerateContentResponse]:
     return response
 
 
-with open("chunks.json", encoding="utf8") as f:
-    chunks: list[dict[str, str]] = load(f)
+def run_chat(api_key: str, chunks_path: str = "chunks.json") -> None:
+    """Inicia loop interativo do chatbot até o usuário informar 0."""
+    chunks = load_chunks(chunks_path)
+    vectorizer, matrix = build_vector_index(chunks)
+    client = Client(api_key=api_key)
 
-documents: list[str] = [chunk["text"] for chunk in chunks]
+    while True:
+        question = input("(Você): ").strip()
+        print()
 
-vectorizer: TfidfVectorizer = TfidfVectorizer(ngram_range=(1, 2), lowercase=True)
-X: spmatrix = vectorizer.fit_transform(documents)
+        if question == "0":
+            break
 
-client = Client(api_key=API_KEY)
+        response = answer(question, client, chunks, vectorizer, matrix)
 
-while True:
-    question = input("(Você): ").strip()
-    print()
+        print("(IA): ", end=" ")
+        for chunk in response:
+            print(chunk.text, end=" ")
 
-    if question == "0":
-        break
+        print(end="\n\n")
 
-    response = answer(question)
 
-    print("(IA): ", end=" ")
-    for chunk in response:
-        print(chunk.text, end=" ")
+def main() -> None:
+    """Resolve API key e inicia o chatbot no modo interativo."""
+    api_key = getenv("GOOGLE_API_KEY") or API_KEY
+    if not api_key:
+        raise ValueError(
+            "Configure GOOGLE_API_KEY no ambiente ou preencha API_KEY em chatbot.py"
+        )
 
-    print(end="\n\n")
+    run_chat(api_key=api_key)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,6 +1,8 @@
 from collections import deque
 from bs4 import BeautifulSoup
 from json import dump
+from os import makedirs
+from os.path import dirname
 from requests import get
 from time import sleep
 from urllib.parse import ParseResult, urljoin, urlparse
@@ -8,9 +10,12 @@ from urllib.parse import ParseResult, urljoin, urlparse
 
 START_URL: str = "https://www.uesc.br/"
 MAX_PAGES: int = 150
+REQUEST_TIMEOUT: int = 10
+CRAWL_DELAY_SECONDS: float = 0.5
 
 
 def is_valid_url(url: str) -> bool:
+    """Valida se uma URL pertence ao domínio alvo e não aponta para arquivo binário."""
     parsed: ParseResult = urlparse(url)
 
     if parsed.scheme not in {"http", "https"}:
@@ -33,6 +38,7 @@ def is_valid_url(url: str) -> bool:
 
 
 def is_secondary_url(url: str) -> bool:
+    """Classifica URLs de baixa prioridade para visitação após links principais."""
     keywords: tuple = (
         "arint",
         "noticias",
@@ -46,110 +52,83 @@ def is_secondary_url(url: str) -> bool:
     return any(word in url for word in keywords)
 
 
-priority_queue: deque[str] = deque([START_URL])
-secondary_queue: deque[str] = deque()
+def crawl_pages(
+    start_url: str = START_URL,
+    max_pages: int = MAX_PAGES,
+    delay_seconds: float = CRAWL_DELAY_SECONDS,
+) -> list[dict[str, str]]:
+    """Rastreia páginas da UESC e retorna metadados com URL, título e texto limpo."""
+    priority_queue: deque[str] = deque([start_url])
+    secondary_queue: deque[str] = deque()
 
-visited: set[str] = set()
-queued: set[str] = {START_URL}
-pages: list[dict[str, str]] = []
+    visited: set[str] = set()
+    queued: set[str] = {start_url}
+    pages: list[dict[str, str]] = []
 
-while priority_queue or secondary_queue and len(visited) < MAX_PAGES:
-    if priority_queue:
-        url = priority_queue.popleft()
-    else:
-        url = secondary_queue.popleft()
+    while (priority_queue or secondary_queue) and len(visited) < max_pages:
+        url = priority_queue.popleft() if priority_queue else secondary_queue.popleft()
 
-    if url in visited:
-        continue
-
-    print(f"[{len(visited)+1}/{MAX_PAGES}] {url}")
-
-    visited.add(url)
-
-    try:
-        response = get(
-            url,
-            timeout=10,
-            headers={
-                "User-Agent":
-                "ChatUESCBot/1.0"
-            }
-        )
-
-        if response.status_code != 200:
+        if url in visited:
             continue
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        print(f"[{len(visited) + 1}/{max_pages}] {url}")
+        visited.add(url)
 
-        for tag in soup([
-            "script",
-            "style",
-            "noscript"
-        ]):
-            tag.decompose()
+        try:
+            response = get(
+                url,
+                timeout=REQUEST_TIMEOUT,
+                headers={"User-Agent": "ChatUESCBot/1.0"},
+            )
 
-        title = (soup.title.text.strip() if soup.title else "Untitled")
+            if response.status_code != 200:
+                continue
 
-        text = soup.get_text(separator=" ", strip=True)
+            soup = BeautifulSoup(response.text, "html.parser")
 
-        pages.append({
-            "url": url,
-            "title": title,
-            "text": text
-        })
+            for tag in soup(["script", "style", "noscript"]):
+                tag.decompose()
 
-        for link in soup.find_all("a", href=True):
-            new_url = urljoin(url, str(link["href"]))
-            new_url = new_url.split("#")[0]
+            title = soup.title.text.strip() if soup.title else "Untitled"
+            text = soup.get_text(separator=" ", strip=True)
 
-            if (is_valid_url(new_url) and new_url not in visited and new_url not in queued):
-                if is_secondary_url(new_url):
-                    secondary_queue.append(new_url)
-                else:
-                    priority_queue.append(new_url)
+            pages.append({"url": url, "title": title, "text": text})
 
-                queued.add(new_url)
+            for link in soup.find_all("a", href=True):
+                new_url = urljoin(url, str(link["href"])).split("#")[0]
 
-    except Exception as e:
-        print(f"Error: {e}")
+                if is_valid_url(new_url) and new_url not in visited and new_url not in queued:
+                    if is_secondary_url(new_url):
+                        secondary_queue.append(new_url)
+                    else:
+                        priority_queue.append(new_url)
 
-    sleep(0.5)
+                    queued.add(new_url)
 
-with open("data/pages.json", "w", encoding="utf8") as f:
-    dump(pages, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            print(f"Error: {exc}")
 
-print(f"\nCollected {len(pages)} pages.")
+        sleep(delay_seconds)
 
-# from bs4 import BeautifulSoup
-# from json import dump
-# from requests import get
+    return pages
 
-# URLS: list[str] = [
-#     "https://www.uesc.br/",
-#     "https://www.uesc.br/cursos/graduacao/",
-#     "https://www.uesc.br/prograd/",
-# ]
 
-# data: list[dict[str, str]] = []
+def save_pages(pages: list[dict[str, str]], output_path: str = "data/pages.json") -> None:
+    """Salva em disco as páginas coletadas no formato JSON."""
+    output_dir = dirname(output_path)
+    if output_dir:
+        makedirs(output_dir, exist_ok=True)
 
-# for url in URLS:
-#     try:
-#         html: str = get(url, timeout=10).text
-#         soup: BeautifulSoup = BeautifulSoup(html, "html.parser")
+    with open(output_path, "w", encoding="utf8") as f:
+        dump(pages, f, ensure_ascii=False, indent=2)
 
-#         title: str = soup.title.text.strip() if soup.title else "Untitled"
-#         text: str = soup.get_text(separator=" ", strip=True)
 
-#         data.append({
-#             "url": url,
-#             "title": title,
-#             "text": text
-#         })
+def main() -> None:
+    """Executa o crawler com configuração padrão e salva o resultado em disco."""
+    pages = crawl_pages()
+    save_pages(pages)
+    print(f"\nCollected {len(pages)} pages.")
 
-#         print(f"Collected: {url}")
 
-#     except Exception as e:
-#         print(f"Error: {e}")
-
-# with open("data/pages.json", "w", encoding="utf8") as f:
-#     dump(data, f, ensure_ascii=False, indent=2)
+if __name__ == "__main__":
+    main()
