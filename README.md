@@ -22,10 +22,10 @@ Gemini
 
 ### Componentes
 
-* **crawler.py**: realiza a coleta de páginas do domínio `uesc.br`.
-* **build_index.py**: divide as páginas em chunks para recuperação de contexto.
-* **chatbot.py**: executa a recuperação de contexto, mantém a conversa e gera respostas com o Gemini.
-* **main.py**: ponto de entrada da aplicação.
+- **crawler.py**: realiza a coleta de páginas do domínio `uesc.br`.
+- **build_index.py**: divide as páginas em chunks para recuperação de contexto.
+- **chatbot.py**: executa a recuperação de contexto, mantém a conversa e gera respostas com o Gemini.
+- **main.py**: ponto de entrada da aplicação.
 
 ## Funcionamento
 
@@ -40,13 +40,13 @@ Gemini
 
 ## Tecnologias Utilizadas
 
-* Python 3.10+
-* Google Gemini API
-* scikit-learn
-* NumPy
-* SciPy
-* Requests
-* Beautiful Soup 4
+- Python 3.10+
+- Google Gemini API
+- scikit-learn
+- NumPy
+- SciPy
+- Requests
+- Beautiful Soup 4
 
 ## Instalação
 
@@ -92,7 +92,7 @@ export GEMINI_API_KEY="SUA_CHAVE"
 Opcionalmente, também é possível definir o modelo:
 
 ```bash
-export GEMINI_MODEL="gemini-2.5-flash"
+export GEMINI_MODEL="gemini-3-flash-preview"
 ```
 
 ## Estrutura do Projeto
@@ -180,30 +180,30 @@ python chatbot.py
 
 Durante a execução do chatbot:
 
-* Faça perguntas normalmente.
-* Digite `0` para encerrar a aplicação.
+- Faça perguntas normalmente.
+- Digite `0` para encerrar a aplicação.
 
 ## Recuperação de Contexto
 
 O sistema utiliza:
 
-* TF-IDF com unigramas e bigramas (`ngram_range=(1, 2)`).
-* Similaridade do cosseno.
-* Deduplicação de URLs.
-* Seleção dos chunks mais relevantes.
-* Fallback para conhecimento geral do modelo quando não houver contexto suficiente.
+- TF-IDF com unigramas e bigramas (`ngram_range=(1, 2)`).
+- Similaridade do cosseno.
+- Deduplicação de URLs.
+- Seleção dos chunks mais relevantes.
+- Fallback para conhecimento geral do modelo quando não houver contexto suficiente.
 
 ## Crawler
 
 O crawler possui as seguintes características:
 
-* Busca em largura (BFS).
-* Priorização de páginas institucionais.
-* Menor prioridade para notícias e eventos.
-* Reutilização de conexões HTTP com `requests.Session`.
-* Retry automático para falhas temporárias.
-* Remoção de parâmetros de rastreamento.
-* Filtragem de arquivos binários (PDF, imagens, planilhas, apresentações etc.).
+- Busca em largura (BFS).
+- Priorização de páginas institucionais.
+- Menor prioridade para notícias e eventos.
+- Reutilização de conexões HTTP com `requests.Session`.
+- Retry automático para falhas temporárias.
+- Remoção de parâmetros de rastreamento.
+- Filtragem de arquivos binários (PDF, imagens, planilhas, apresentações etc.).
 
 ## Arquivos Gerados
 
@@ -233,6 +233,6 @@ Contém os chunks utilizados na recuperação:
 
 ## Limitações
 
-* A qualidade das respostas depende do conteúdo coletado pelo crawler.
-* O sistema utiliza TF-IDF, não embeddings semânticos.
-* O conhecimento da base precisa ser atualizado manualmente através do crawler.
+- A qualidade das respostas depende do conteúdo coletado pelo crawler.
+- O sistema utiliza TF-IDF, não embeddings semânticos.
+- O conhecimento da base precisa ser atualizado manualmente através do crawler.
