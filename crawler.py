@@ -68,6 +68,7 @@ HIGH_PRIORITY_KEYWORDS: tuple[str, ...] = (
     "curso",
     "mestrado",
     "doutorado",
+    "calendario",
     "laboratorio",
 )
 
@@ -77,7 +78,6 @@ LOW_PRIORITY_KEYWORDS: tuple[str, ...] = (
     "evento",
     "eventos",
     "agenda",
-    "calendario",
     "mural",
     "edital",
     "editais",
@@ -191,11 +191,11 @@ def get_priority(url: str) -> int:
     """
     lowered_url: str = url.lower()
 
-    if any(keyword in lowered_url for keyword in HIGH_PRIORITY_KEYWORDS):
-        return 0
-
     if any(keyword in lowered_url for keyword in LOW_PRIORITY_KEYWORDS):
         return 2
+
+    if any(keyword in lowered_url for keyword in HIGH_PRIORITY_KEYWORDS):
+        return 0
 
     return 1
 

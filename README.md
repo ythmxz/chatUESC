@@ -1,80 +1,238 @@
 # ChatUESC
 
-Chatbot de perguntas e respostas sobre a UESC com pipeline local de:
+Chatbot de perguntas e respostas sobre a Universidade Estadual de Santa Cruz (UESC) utilizando Recuperação Aumentada por Geração (RAG).
 
-1. Coleta de páginas do domínio uesc.br.
-2. Geração de chunks de contexto para recuperação.
-3. Busca semântica com TF-IDF.
-4. Resposta com Gemini usando somente o contexto recuperado.
+O sistema coleta páginas do site da UESC, gera uma base local de conhecimento, recupera os trechos mais relevantes utilizando TF-IDF e utiliza o Gemini para gerar respostas contextualizadas.
 
 ## Arquitetura
 
-- crawler.py: rastreia páginas da UESC e salva em data/pages.json.
-- build_index.py: transforma páginas em chunks e salva em chunks.json.
-- chatbot.py: recupera contexto relevante e gera respostas em streaming.
-- main.py: integra o fluxo completo em um único comando.
+```text
+crawler.py
+    ↓
+data/pages.json
+    ↓
+build_index.py
+    ↓
+data/chunks.json
+    ↓
+chatbot.py
+    ↓
+Gemini
+```
 
-## Pré-requisitos
+### Componentes
 
-- Python 3.10+
-- Dependências do projeto
-- Chave de API do Google AI Studio: https://aistudio.google.com/api-keys
+* **crawler.py**: realiza a coleta de páginas do domínio `uesc.br`.
+* **build_index.py**: divide as páginas em chunks para recuperação de contexto.
+* **chatbot.py**: executa a recuperação de contexto, mantém a conversa e gera respostas com o Gemini.
+* **main.py**: ponto de entrada da aplicação.
+
+## Funcionamento
+
+1. O crawler percorre o site da UESC utilizando Busca em Largura (BFS).
+2. As páginas coletadas são armazenadas em `data/pages.json`.
+3. O indexador divide os textos em chunks com sobreposição.
+4. Os chunks são armazenados em `data/chunks.json`.
+5. A pergunta do usuário é transformada em um vetor TF-IDF.
+6. Os chunks mais relevantes são recuperados utilizando similaridade do cosseno.
+7. O contexto recuperado é enviado ao Gemini.
+8. O Gemini gera a resposta final mantendo o histórico da conversa.
+
+## Tecnologias Utilizadas
+
+* Python 3.10+
+* Google Gemini API
+* scikit-learn
+* NumPy
+* SciPy
+* Requests
+* Beautiful Soup 4
 
 ## Instalação
+
+Crie e ative um ambiente virtual:
+
+### Windows (PowerShell)
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -U pip
-pip install requests beautifulsoup4 scikit-learn scipy numpy google-genai
 ```
 
-## Configuração da API
+### Linux
 
-Opção recomendada (variável de ambiente):
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+Instale as dependências:
+
+```bash
+python -m pip install -U pip
+pip install -r requirements.txt
+```
+
+## Configuração
+
+Defina a chave da API Gemini através da variável de ambiente:
+
+### Windows (PowerShell)
 
 ```powershell
-$env:GOOGLE_API_KEY="SUA_CHAVE_AQUI"
+$env:GEMINI_API_KEY="SUA_CHAVE"
 ```
 
-Alternativa:
+### Linux
 
-- Preencher a constante API_KEY em chatbot.py.
-
-## Execução
-
-Fluxo completo com um comando:
-
-```powershell
-python .\main.py
+```bash
+export GEMINI_API_KEY="SUA_CHAVE"
 ```
 
-Opções úteis:
+Opcionalmente, também é possível definir o modelo:
 
-```powershell
-python .\main.py --skip-crawl
-python .\main.py --skip-index
+```bash
+export GEMINI_MODEL="gemini-2.5-flash"
 ```
 
-Durante o chat:
+## Estrutura do Projeto
 
-- Digite perguntas normalmente.
-- Digite 0 para encerrar.
-
-## Execução modular (opcional)
-
-```powershell
-python .\crawler.py
-python .\build_index.py
-python .\chatbot.py
+```text
+chatUESC/
+├── data/
+│   ├── chunks.json
+│   └── pages.json
+├── build_index.py
+├── chatbot.py
+├── crawler.py
+├── main.py
+├── README.md
+└── requirements.txt
 ```
 
-## Estrutura de dados gerados
+## Uso
 
-- data/pages.json: lista de páginas coletadas (url, title, text).
-- chunks.json: lista de chunks para recuperação de contexto.
+### Executar apenas o chatbot
 
-## A Fazer
+```bash
+python main.py
+```
 
-- Implementar recuperação baseada em TF-IDF com `sentence-transformers` usando modelo local `all-MiniLM-L6-v2` (não usa embeddings densos).
-- Implementar cache de respostas ou detecção de resposta já contida no contexto final.
+### Atualizar páginas e chunks
+
+```bash
+python main.py -u
+```
+
+ou
+
+```bash
+python main.py --update
+```
+
+### Executar apenas o crawler
+
+```bash
+python main.py -c
+```
+
+ou
+
+```bash
+python main.py --crawl
+```
+
+### Reconstruir apenas os chunks
+
+```bash
+python main.py -b
+```
+
+ou
+
+```bash
+python main.py --build
+```
+
+## Execução Modular
+
+Também é possível executar cada etapa separadamente.
+
+### Coleta de páginas
+
+```bash
+python crawler.py
+```
+
+### Geração dos chunks
+
+```bash
+python build_index.py
+```
+
+### Chatbot
+
+```bash
+python chatbot.py
+```
+
+## Conversação
+
+Durante a execução do chatbot:
+
+* Faça perguntas normalmente.
+* Digite `0` para encerrar a aplicação.
+
+## Recuperação de Contexto
+
+O sistema utiliza:
+
+* TF-IDF com unigramas e bigramas (`ngram_range=(1, 2)`).
+* Similaridade do cosseno.
+* Deduplicação de URLs.
+* Seleção dos chunks mais relevantes.
+* Fallback para conhecimento geral do modelo quando não houver contexto suficiente.
+
+## Crawler
+
+O crawler possui as seguintes características:
+
+* Busca em largura (BFS).
+* Priorização de páginas institucionais.
+* Menor prioridade para notícias e eventos.
+* Reutilização de conexões HTTP com `requests.Session`.
+* Retry automático para falhas temporárias.
+* Remoção de parâmetros de rastreamento.
+* Filtragem de arquivos binários (PDF, imagens, planilhas, apresentações etc.).
+
+## Arquivos Gerados
+
+### data/pages.json
+
+Contém as páginas coletadas:
+
+```json
+{
+  "url": "...",
+  "title": "...",
+  "text": "..."
+}
+```
+
+### data/chunks.json
+
+Contém os chunks utilizados na recuperação:
+
+```json
+{
+  "url": "...",
+  "title": "...",
+  "text": "..."
+}
+```
+
+## Limitações
+
+* A qualidade das respostas depende do conteúdo coletado pelo crawler.
+* O sistema utiliza TF-IDF, não embeddings semânticos.
+* O conhecimento da base precisa ser atualizado manualmente através do crawler.
