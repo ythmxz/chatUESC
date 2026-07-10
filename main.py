@@ -1,61 +1,87 @@
-from argparse import ArgumentParser, Namespace
-from os import getenv
+import argparse
+from argparse import Namespace
 
-from build_index import build_chunks, load_pages, save_chunks
-from chatbot import API_KEY, run_chat
-from crawler import crawl_pages, save_pages
+import build_index
+import chatbot
+import crawler
 
 
-def run_pipeline(skip_crawl: bool = False, skip_index: bool = False) -> None:
-    """Executa pipeline completo (coleta, indexação e chat) com etapas opcionais."""
-    if skip_crawl:
-        pages = load_pages()
-        print(f"Loaded {len(pages)} pages from data/pages.json.")
-    else:
-        print("Starting crawler...")
-        pages = crawl_pages()
-        save_pages(pages)
-        print(f"Collected {len(pages)} pages.")
+def parse_arguments() -> Namespace:
+    """
+    Lê os argumentos da linha de comando.
 
-    if skip_index:
-        print("Skipping chunk generation.")
-    else:
-        print("Building chunks...")
-        chunks = build_chunks(pages)
-        save_chunks(chunks)
-        print(f"Generated {len(chunks)} chunks.")
-
-    api_key = getenv("GOOGLE_API_KEY") or API_KEY
-    if not api_key:
-        raise ValueError(
-            "Configure GOOGLE_API_KEY no ambiente ou preencha API_KEY em chatbot.py"
+    Returns:
+        Argumentos informados pelo usuário.
+    """
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        description=(
+            "Executa o pipeline do ChatUESC: crawler, geração dos chunks e chatbot."
         )
-
-    print("Starting chatbot. Enter 0 to exit.")
-    run_chat(api_key=api_key)
-
-
-def parse_args() -> Namespace:
-    """Define e processa argumentos de linha de comando do script principal."""
-    parser = ArgumentParser(description="Pipeline do ChatUESC")
-    parser.add_argument(
-        "--skip-crawl",
-        action="store_true",
-        help="Pula coleta e usa data/pages.json existente.",
     )
+
     parser.add_argument(
-        "--skip-index",
+        "-u",
+        "--update",
         action="store_true",
-        help="Pula geração de chunks e usa chunks.json existente.",
+        help="Atualiza páginas e chunks.",
+    )
+
+    parser.add_argument(
+        "-c",
+        "--crawl",
+        action="store_true",
+        help="Não executa a coleta das páginas do site.",
+    )
+
+    parser.add_argument(
+        "-b",
+        "--build",
+        action="store_true",
+        help="Não gera novamente o arquivo de chunks.",
     )
 
     return parser.parse_args()
 
 
 def main() -> None:
-    """Integra o fluxo de execução do projeto em um único comando."""
-    args = parse_args()
-    run_pipeline(skip_crawl=args.skip_crawl, skip_index=args.skip_index)
+    """
+    Executa o pipeline principal do ChatUESC.
+    """
+    arguments: Namespace = parse_arguments()
+
+    if arguments.update:
+        print("Executando crawler...")
+        print()
+
+        crawler.main()
+        print()
+
+        print("Gerando chunks...")
+        print()
+
+        build_index.main()
+        print()
+
+    if arguments.crawl:
+        print("Executando crawler...")
+        print()
+
+        crawler.main()
+
+        print()
+
+    if arguments.build:
+        print("Gerando chunks...")
+        print()
+
+        build_index.main()
+
+        print()
+
+    print("Iniciando chatbot...")
+    print()
+
+    chatbot.main()
 
 
 if __name__ == "__main__":

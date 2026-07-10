@@ -1,138 +1,260 @@
-from google.genai import Client
-from google.genai.types import GenerateContentConfig, GenerateContentResponse
 from json import load
 from os import getenv
+from typing import Any, cast
+
+from google.genai import Client
+from google.genai.chats import Chat
+from google.genai.types import GenerateContentConfig
 from numpy import dtype, float64, int64, ndarray
-from scipy.sparse import spmatrix
+from scipy.sparse import csr_matrix
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from typing import Any, Iterator
+
+MODEL: str = getenv("GEMINI_MODEL", "gemini-2.5-flash")
+TOP_K: int = 10
+SIMILARITY_THRESHOLD: float = 0.10
+SYSTEM_INSTRUCTION: str = """
+Você é um assistente da Universidade Estadual de Santa Cruz (UESC).
+
+Responda em português do Brasil.
+
+Mantenha o contexto da conversa atual.
+
+Não invente informações.
+
+Quando não souber uma resposta, deixe isso claro.
+"""
 
 
-API_KEY: str = ""
+def load_chunks(path: str) -> list[dict[str, str]]:
+    """
+    Carrega os chunks indexados.
+
+    Args:
+        path: Caminho do arquivo JSON contendo os chunks.
+
+    Returns:
+        Lista de chunks.
+    """
+    with open(path, encoding="utf8") as file:
+        return load(file)
 
 
-def load_chunks(chunks_path: str = "chunks.json") -> list[dict[str, str]]:
-    """Carrega os chunks de contexto que alimentam a recuperação de informação."""
-    with open(chunks_path, encoding="utf8") as f:
-        return load(f)
+def build_vectorizer(documents: list[str]) -> tuple[TfidfVectorizer, csr_matrix]:
+    """
+    Constrói o modelo TF-IDF dos documentos.
 
+    Args:
+        documents: Textos utilizados na construção do índice.
 
-def build_vector_index(chunks: list[dict[str, str]]) -> tuple[TfidfVectorizer, spmatrix]:
-    """Cria vetorizador TF-IDF e matriz de documentos para busca por similaridade."""
-    documents: list[str] = [chunk["text"] for chunk in chunks]
-    vectorizer: TfidfVectorizer = TfidfVectorizer(ngram_range=(1, 2), lowercase=True)
-    matrix: spmatrix = vectorizer.fit_transform(documents)
+    Returns:
+        Tupla contendo o vetorizador treinado e a matriz TF-IDF.
+
+    Raises:
+        ValueError: Caso a lista de documentos esteja vazia.
+    """
+    if not documents:
+        raise ValueError("Não é possível construir o índice sem documentos.")
+
+    vectorizer: TfidfVectorizer = TfidfVectorizer(lowercase=True, ngram_range=(1, 2))
+
+    matrix: csr_matrix = cast(csr_matrix, vectorizer.fit_transform(documents))
+
     return vectorizer, matrix
+
+
+def create_chat(client: Client) -> Chat:
+    """
+    Cria uma sessão de chat persistente.
+
+    Args:
+        client: Cliente Gemini.
+
+    Returns:
+        Sessão de chat.
+    """
+    return client.chats.create(
+        model=MODEL, config=GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
+    )
 
 
 def search_context(
     question: str,
     chunks: list[dict[str, str]],
     vectorizer: TfidfVectorizer,
-    matrix: spmatrix,
-    k: int = 15,
-) -> list[dict[str, str]]:
-    """Recupera os chunks mais relevantes para a pergunta evitando duplicação por URL."""
-    question_vector: spmatrix = vectorizer.transform([question])
-    similarities: ndarray[Any, dtype[float64]] = cosine_similarity(question_vector, matrix)[0]
-    indexes: ndarray[Any, dtype[int64]] = similarities.argsort()[-k:][::-1]
+    matrix: csr_matrix,
+    k: int = TOP_K,
+) -> tuple[list[dict[str, str]], ndarray[Any, dtype[float64]]]:
+    """
+    Recupera os chunks mais relevantes para uma pergunta.
 
-    results: list[dict[str, str]] = []
+    Chunks da mesma URL são deduplicados para evitar
+    desperdício de contexto.
+
+    Args:
+        question: Pergunta do usuário.
+        chunks: Lista de chunks indexados.
+        vectorizer: Vetorizador TF-IDF.
+        matrix: Matriz TF-IDF.
+        k: Quantidade máxima de chunks.
+
+    Returns:
+        Tupla contendo:
+        - Lista de chunks relevantes.
+        - Vetor de similaridades.
+    """
+    question_vector: csr_matrix = cast(csr_matrix, vectorizer.transform([question]))
+
+    similarities: ndarray[Any, dtype[float64]] = cosine_similarity(
+        question_vector, matrix
+    )[0]
+
+    indexes: ndarray[Any, dtype[int64]] = similarities.argsort()[::-1]
+
+    selected_chunks: list[dict[str, str]] = []
+    selected_scores: list[float] = []
+
     used_urls: set[str] = set()
 
     for index in indexes:
+        score: float = float(similarities[index])
+
+        if score < SIMILARITY_THRESHOLD:
+            break
+
         url: str = chunks[index]["url"]
 
         if url in used_urls:
             continue
 
         used_urls.add(url)
-        results.append(chunks[index])
+        selected_chunks.append(chunks[index])
+        selected_scores.append(score)
 
-        if len(results) >= k:
+        if len(selected_chunks) >= k:
             break
 
-    return results
+    return (
+        selected_chunks,
+        ndarray(shape=(len(selected_scores),), dtype=float64, buffer=None)
+        if False
+        else __import__("numpy").array(selected_scores, dtype=float64),
+    )
+
+
+def build_prompt(question: str, context: list[dict[str, str]]) -> str:
+    """
+    Constrói o prompt enviado ao Gemini.
+
+    Args:
+        question: Pergunta do usuário.
+        context: Chunks recuperados.
+
+    Returns:
+        Prompt formatado.
+    """
+    if len(context) == 0:
+        return f"""
+        Pergunta:
+
+        {question}
+        """
+
+    context_text: str = "\n\n".join(chunk["text"] for chunk in context)
+
+    return f"""
+    CONTEXTO:
+
+    {context_text}
+
+    PERGUNTA:
+
+    {question}
+
+    Utilize prioritariamente o contexto acima.
+    Caso necessário, complemente a resposta com conhecimento geral.
+    """
 
 
 def answer(
     question: str,
-    client: Client,
+    chat: Chat,
     chunks: list[dict[str, str]],
     vectorizer: TfidfVectorizer,
-    matrix: spmatrix,
-    model: str = "gemini-3.5-flash",
-) -> Iterator[GenerateContentResponse]:
-    """Gera resposta em streaming usando Gemini com contexto recuperado localmente."""
-    context: list[dict[str, str]] = search_context(question, chunks, vectorizer, matrix)
-    context_text = "\n\n".join(item["text"] for item in context)
-
-    prompt: str = f"""
-    CONTEXTO:
-    {context_text}
-
-    INSTRUÇÕES:
-
-    - Use somente o contexto.
-    - Se houver uma lista completa no contexto, reproduza a lista completa.
-    - Não resuma listas.
-    - Não omita itens.
-
-    PERGUNTA:
-    {question}
+    matrix: csr_matrix,
+) -> str:
     """
+    Responde uma pergunta do usuário.
 
-    response = client.models.generate_content_stream(
-        model=model,
-        contents=prompt,
-        config=GenerateContentConfig(
-            system_instruction="""
-            Você é um assistente da UESC.
+    Args:
+        question: Pergunta do usuário.
+        chat: Sessão de chat Gemini.
+        chunks: Chunks indexados.
+        vectorizer: Vetorizador TF-IDF.
+        matrix: Matriz TF-IDF.
 
-            Priorize o contexto recebido.
+    Returns:
+        Resposta gerada pelo Gemini.
+    """
+    context, _ = search_context(
+        question=question, chunks=chunks, vectorizer=vectorizer, matrix=matrix
+    )
 
-            Se a resposta não estiver no contexto,
-            informe que não encontrou a informação.
+    prompt: str = build_prompt(question=question, context=context)
 
-            Não informe que está buscando ou que a resposta é baseada em um contexto recebido.
-            """
-        ))
+    response = chat.send_message(prompt)
 
-    return response
+    response_text: str | None = response.text
+
+    if response_text is None:
+        raise RuntimeError("O Gemini retornou uma resposta sem conteúdo textual.")
+
+    return response_text
 
 
-def run_chat(api_key: str, chunks_path: str = "chunks.json") -> None:
-    """Inicia loop interativo do chatbot até o usuário informar 0."""
-    chunks = load_chunks(chunks_path)
-    vectorizer, matrix = build_vector_index(chunks)
-    client = Client(api_key=api_key)
+def main() -> None:
+    """
+    Executa o chatbot.
+    """
+    api_key: str | None = getenv("GEMINI_API_KEY")
+
+    if api_key is None:
+        raise RuntimeError("GEMINI_API_KEY não definida.")
+
+    chunks: list[dict[str, str]] = load_chunks("data/chunks.json")
+
+    documents: list[str] = [chunk["text"] for chunk in chunks]
+
+    vectorizer, matrix = build_vectorizer(documents)
+
+    client: Client = Client(api_key=api_key)
+
+    chat: Chat = create_chat(client)
 
     while True:
-        question = input("(Você): ").strip()
+        question: str = input("(Você): ").strip()
+
         print()
 
         if question == "0":
             break
 
-        response = answer(question, client, chunks, vectorizer, matrix)
+        try:
+            response: str = answer(
+                question=question,
+                chat=chat,
+                chunks=chunks,
+                vectorizer=vectorizer,
+                matrix=matrix,
+            )
 
-        print("(IA): ", end=" ")
-        for chunk in response:
-            print(chunk.text, end=" ")
+            print("(IA):")
+            print(response)
+            print()
 
-        print(end="\n\n")
-
-
-def main() -> None:
-    """Resolve API key e inicia o chatbot no modo interativo."""
-    api_key = getenv("GOOGLE_API_KEY") or API_KEY
-    if not api_key:
-        raise ValueError(
-            "Configure GOOGLE_API_KEY no ambiente ou preencha API_KEY em chatbot.py"
-        )
-
-    run_chat(api_key=api_key)
+        except Exception as error:
+            print(f"(Erro): {error}")
+            print()
 
 
 if __name__ == "__main__":
