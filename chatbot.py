@@ -16,7 +16,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 load_dotenv()
 
 CHUNKS_PATH: Path = Path("data/chunks.json")
-MODEL: str = getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL: str = getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 TOP_K: int = 10
 MAX_CHUNKS_PER_URL: int = 3
 SIMILARITY_THRESHOLD: float = 0.10
