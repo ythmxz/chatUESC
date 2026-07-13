@@ -15,29 +15,37 @@ def parse_arguments() -> Namespace:
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         description=(
-            "Executa o pipeline do ChatUESC: crawler, geração dos chunks e chatbot."
+            "Executa o ChatUESC e, opcionalmente, "
+            "atualiza as páginas e os chunks."
         )
-    )
-
-    parser.add_argument(
-        "-u",
-        "--update",
-        action="store_true",
-        help="Atualiza páginas e chunks.",
     )
 
     parser.add_argument(
         "-c",
         "--crawl",
         action="store_true",
-        help="Não executa a coleta das páginas do site.",
+        help="Coleta novamente as páginas do site da UESC.",
     )
 
     parser.add_argument(
         "-b",
         "--build",
         action="store_true",
-        help="Não gera novamente o arquivo de chunks.",
+        help="Gera novamente os chunks a partir das páginas coletadas.",
+    )
+
+    parser.add_argument(
+        "-u",
+        "--update",
+        action="store_true",
+        help="Executa o crawler e gera novamente os chunks.",
+    )
+
+    parser.add_argument(
+        "-d",
+        "--debug",
+        action="store_true",
+        help="Exibe os resultados da recuperação TF-IDF.",
     )
 
     return parser.parse_args()
@@ -45,32 +53,29 @@ def parse_arguments() -> Namespace:
 
 def main() -> None:
     """
-    Executa o pipeline principal do ChatUESC.
+    Executa as etapas solicitadas e inicia o chatbot.
     """
     arguments: Namespace = parse_arguments()
 
-    if arguments.update:
+    should_crawl: bool = (
+        arguments.crawl
+        or arguments.update
+    )
+
+    should_build: bool = (
+        arguments.build
+        or arguments.update
+    )
+
+    if should_crawl:
         print("Executando crawler...")
         print()
 
         crawler.main()
-        print()
-
-        print("Gerando chunks...")
-        print()
-
-        build_index.main()
-        print()
-
-    if arguments.crawl:
-        print("Executando crawler...")
-        print()
-
-        crawler.main()
 
         print()
 
-    if arguments.build:
+    if should_build:
         print("Gerando chunks...")
         print()
 
@@ -81,7 +86,9 @@ def main() -> None:
     print("Iniciando chatbot...")
     print()
 
-    chatbot.main()
+    chatbot.main(
+        debug=arguments.debug
+    )
 
 
 if __name__ == "__main__":

@@ -18,14 +18,13 @@ from urllib3.util.retry import Retry
 
 START_URL: str = "https://www.uesc.br/"
 
-MAX_PAGES: int = 100
+MAX_PAGES: int = 150
 REQUEST_DELAY: float = 0.5
 REQUEST_TIMEOUT: int = 10
 
 OUTPUT_PATH: Path = Path("data/pages.json")
 
 BLOCKED_EXTENSIONS: tuple[str, ...] = (
-    ".pdf",
     ".jpg",
     ".jpeg",
     ".png",

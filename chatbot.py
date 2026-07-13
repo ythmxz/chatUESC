@@ -2,6 +2,8 @@ from json import load
 from os import getenv
 from pathlib import Path
 from typing import Any, TypedDict, cast
+from collections.abc import Sequence
+from getpass import getpass
 
 from dotenv import load_dotenv
 
@@ -15,10 +17,12 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 load_dotenv()
 
+DEBUG_RESULTS: int = 10
+
 CHUNKS_PATH: Path = Path("data/chunks.json")
 MODEL: str = getenv("GEMINI_MODEL", "gemini-3-flash-preview")
-TOP_K: int = 10
-MAX_CHUNKS_PER_URL: int = 3
+TOP_K: int = 15
+MAX_CHUNKS_PER_URL: int = 5
 SIMILARITY_THRESHOLD: float = 0.10
 
 SYSTEM_INSTRUCTION: str = """
@@ -29,10 +33,125 @@ Não invente informações nem afirme como certo aquilo que não souber.
 
 O contexto enviado junto à pergunta é uma fonte preferencial, mas não é uma
 restrição. Quando ele estiver incompleto, irrelevante ou não contiver a resposta,
-responda utilizando seu conhecimento geral. Não diga ao usuário para procurar a
-informação por conta própria quando você puder fornecer uma resposta útil.
+responda utilizando seu conhecimento geral ou procure normalmente. Não diga ao usuário
+para procurar a informação por conta própria quando você puder fornecer uma resposta útil.
 """
 
+def get_api_key() -> str:
+    """
+    Obtém a chave da API Gemini.
+
+    Primeiro tenta carregar a variável GEMINI_API_KEY.
+    Caso ela não exista, solicita a chave pelo terminal.
+
+    Returns:
+        Chave da API Gemini.
+
+    Raises:
+        RuntimeError: Caso nenhuma chave seja informada.
+    """
+    api_key: str | None = getenv(
+        "GEMINI_API_KEY"
+    )
+
+    if api_key is not None:
+        api_key = api_key.strip()
+
+    if api_key:
+        return api_key
+
+    api_key = getpass(
+        "Informe a chave da API Gemini: "
+    ).strip()
+
+    if not api_key:
+        raise RuntimeError(
+            "Nenhuma chave da API Gemini foi informada."
+        )
+
+    return api_key
+
+
+def print_retrieval_debug(
+    similarities: ndarray[Any, dtype[float64]],
+    chunks: Sequence[Chunk],
+    selected_chunks: Sequence[Chunk],
+    selected_scores: Sequence[float],
+    debug: bool,
+) -> None:
+    """
+    Exibe informações de depuração da recuperação de contexto.
+
+    Args:
+        similarities: Similaridades entre a pergunta e os chunks.
+        chunks: Chunks disponíveis no índice.
+        selected_chunks: Chunks selecionados para o contexto.
+        selected_scores: Scores dos chunks selecionados.
+        debug: Indica se a depuração está habilitada.
+    """
+    if not debug:
+        return
+
+    top_indexes: ndarray[Any, dtype[int64]] = (
+        similarities.argsort()[::-1][:DEBUG_RESULTS]
+    )
+
+    print()
+    print("=" * 80)
+    print("MELHORES RESULTADOS DO TF-IDF")
+    print("=" * 80)
+
+    for position, index_value in enumerate(
+        top_indexes,
+        start=1,
+    ):
+        index: int = int(index_value)
+        chunk: Chunk = chunks[index]
+        score: float = float(similarities[index])
+
+        preview: str = (
+            chunk["text"][:200]
+            .replace("\n", " ")
+            .strip()
+        )
+
+        print()
+        print(f"{position}. Score: {score:.4f}")
+        print(f"Título: {chunk['title']}")
+        print(f"URL: {chunk['url']}")
+        print(f"Trecho: {preview}...")
+
+    print()
+    print("=" * 80)
+    print("CHUNKS ENVIADOS AO GEMINI")
+    print("=" * 80)
+
+    if not selected_chunks:
+        print()
+        print("Nenhum chunk foi selecionado.")
+    else:
+        for position, (chunk, score) in enumerate(
+            zip(
+                selected_chunks,
+                selected_scores,
+            ),
+            start=1,
+        ):
+            preview: str = (
+                chunk["text"][:200]
+                .replace("\n", " ")
+                .strip()
+            )
+
+            print()
+            print(f"{position}. Score: {score:.4f}")
+            print(f"Título: {chunk['title']}")
+            print(f"URL: {chunk['url']}")
+            print(f"Trecho: {preview}...")
+
+    print()
+    print("=" * 80)
+    print()
 
 class Chunk(TypedDict):
     """Representa um trecho de uma página coletada."""
@@ -102,7 +221,38 @@ def build_documents(chunks: list[Chunk]) -> list[str]:
     Returns:
         Lista de textos utilizados pelo vetorizador.
     """
-    return [f"{chunk['title']} {chunk['text']}" for chunk in chunks]
+    return [prepare_document(chunk) for chunk in chunks]
+
+
+def prepare_document(chunk: Chunk) -> str:
+    """
+    Prepara um chunk para indexação, atribuindo maior relevância
+    ao título e incluindo os termos presentes na URL.
+
+    Args:
+        chunk: Chunk que será indexado.
+
+    Returns:
+        Texto preparado para o índice TF-IDF.
+    """
+    normalized_url: str = (
+        chunk["url"]
+        .replace("https://", " ")
+        .replace("http://", " ")
+        .replace("/", " ")
+        .replace("-", " ")
+        .replace("_", " ")
+        .replace("?", " ")
+        .replace("=", " ")
+        .replace(".", " ")
+    )
+
+    return (
+        f"{chunk['title']} "
+        f"{chunk['title']} "
+        f"{normalized_url} "
+        f"{chunk['text']}"
+    )
 
 
 def build_vectorizer(
@@ -124,8 +274,10 @@ def build_vectorizer(
         raise ValueError("Não é possível construir o índice sem documentos.")
 
     vectorizer: TfidfVectorizer = TfidfVectorizer(
-        lowercase=True,
-        ngram_range=(1, 2),
+    lowercase=True,
+    strip_accents="unicode",
+    ngram_range=(1, 2),
+    sublinear_tf=True,
     )
 
     matrix: csr_matrix = cast(
@@ -154,13 +306,52 @@ def create_chat(client: Client) -> Chat:
     )
 
 
+def calculate_metadata_bonus(
+    question: str,
+    chunk: Chunk,
+) -> float:
+    """
+    Calcula um bônus de relevância com base no título e na URL.
+
+    Args:
+        question: Pergunta feita pelo usuário.
+        chunk: Chunk avaliado.
+
+    Returns:
+        Bônus que será somado à similaridade TF-IDF.
+    """
+    question_terms: set[str] = set(
+        question.lower().split()
+    )
+
+    metadata: str = (
+        f"{chunk['title']} {chunk['url']}"
+        .lower()
+        .replace("-", " ")
+        .replace("_", " ")
+        .replace("/", " ")
+    )
+
+    matching_terms: int = sum(
+        term in metadata
+        for term in question_terms
+        if len(term) >= 4
+    )
+
+    return matching_terms * 0.03
+
+
 def search_context(
     question: str,
     chunks: list[Chunk],
     vectorizer: TfidfVectorizer,
     matrix: csr_matrix,
     k: int = TOP_K,
-) -> tuple[list[Chunk], ndarray[Any, dtype[float64]]]:
+    debug: bool = False,
+) -> tuple[
+    list[Chunk],
+    ndarray[Any, dtype[float64]],
+]:
     """
     Recupera os chunks mais relevantes para uma pergunta.
 
@@ -187,31 +378,50 @@ def search_context(
         matrix,
     )[0]
 
+    for index, chunk in enumerate(chunks):
+        similarities[index] += calculate_metadata_bonus(
+            question,
+            chunk,
+        )
+
     indexes: ndarray[Any, dtype[int64]] = similarities.argsort()[::-1]
 
     selected_chunks: list[Chunk] = []
     selected_scores: list[float] = []
     chunks_per_url: dict[str, int] = {}
 
-    for index in indexes:
+    for index_value in indexes:
+        index: int = int(index_value)
         score: float = float(similarities[index])
 
-        if score < SIMILARITY_THRESHOLD:
+        if (
+            score < SIMILARITY_THRESHOLD
+            and selected_chunks
+        ):
             break
 
-        chunk: Chunk = chunks[int(index)]
-        url: str = chunk["url"]
-        url_count: int = chunks_per_url.get(url, 0)
+        url: str = chunks[index]["url"]
 
-        if url_count >= MAX_CHUNKS_PER_URL:
+        if chunks_per_url.get(url, 0) >= 3:
             continue
 
-        selected_chunks.append(chunk)
+        selected_chunks.append(chunks[index])
         selected_scores.append(score)
-        chunks_per_url[url] = url_count + 1
+
+        chunks_per_url[url] = (
+            chunks_per_url.get(url, 0) + 1
+        )
 
         if len(selected_chunks) >= k:
             break
+
+    print_retrieval_debug(
+        similarities=similarities,
+        chunks=chunks,
+        selected_chunks=selected_chunks,
+        selected_scores=selected_scores,
+        debug=debug,
+    )
 
     return selected_chunks, array(selected_scores, dtype=float64)
 
@@ -242,8 +452,8 @@ def build_prompt(question: str, context: list[Chunk]) -> str:
     Use as informações abaixo quando forem relevantes para responder à pergunta.
     Elas podem estar incompletas ou conter trechos que não respondem diretamente ao
     que foi perguntado. Nesse caso, ignore os trechos irrelevantes e complemente ou
-    responda utilizando seu conhecimento geral. Não responda apenas que a informação
-    não foi encontrada e não mande o usuário procurá-la por conta própria.
+    responda utilizando seu conhecimento geral ou procure normalmente. Não responda apenas
+    que a informação não foi encontrada e não mande o usuário procurá-la por conta própria.
 
     CONTEXTO RECUPERADO:
     {context_text}
@@ -259,6 +469,7 @@ def answer(
     chunks: list[Chunk],
     vectorizer: TfidfVectorizer,
     matrix: csr_matrix,
+    debug: bool = False,
 ) -> str:
     """
     Recupera contexto e gera uma resposta para o usuário.
@@ -281,6 +492,7 @@ def answer(
         chunks=chunks,
         vectorizer=vectorizer,
         matrix=matrix,
+        debug=debug,
     )
 
     prompt: str = build_prompt(
@@ -297,12 +509,25 @@ def answer(
     return response_text
 
 
-def main() -> None:
+def main(
+    debug: bool = False
+) -> None:
+    """
+    Executa o chatbot.
+
+    Args:
+        debug: Indica se os resultados da recuperação
+            devem ser exibidos.
+    """
     """Inicializa os componentes e executa o laço de conversa."""
-    api_key: str | None = getenv("GEMINI_API_KEY")
+    api_key: str | None = getenv(
+    "GEMINI_API_KEY"
+)
 
     if api_key is None:
-        raise RuntimeError("GEMINI_API_KEY não definida.")
+        raise RuntimeError(
+            "GEMINI_API_KEY não definida."
+        )
 
     chunks: list[Chunk] = load_chunks(CHUNKS_PATH)
     documents: list[str] = build_documents(chunks)
@@ -328,6 +553,7 @@ def main() -> None:
                 chunks=chunks,
                 vectorizer=vectorizer,
                 matrix=matrix,
+                debug=debug,
             )
 
             print("(IA):")

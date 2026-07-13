@@ -5,8 +5,8 @@ from typing import TypedDict
 INPUT_PATH: Path = Path("data/pages.json")
 OUTPUT_PATH: Path = Path("data/chunks.json")
 
-CHUNK_SIZE: int = 3000
-OVERLAP: int = 500
+CHUNK_SIZE: int = 5000
+OVERLAP: int = 1000
 MIN_CHUNK_SIZE: int = 100
 
 
